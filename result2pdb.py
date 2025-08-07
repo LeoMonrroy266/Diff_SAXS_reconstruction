@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 voxel_to_pdb_tools.py – pure-Python replacement for the old scitbx/sastbx helpers

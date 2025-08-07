@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 Inference helpers for the 3-D voxel auto-encoder (TF-2 / Keras)

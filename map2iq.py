@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 saxs_utils.py  –  pure-NumPy replacement for cctbx/sastbx workflow

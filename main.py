@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # coding: utf-8
 """
 Genetic-algorithm driver  —  TensorFlow-2 / Keras version

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Convert a 31×31×31 voxel grid (values 0/1/–1) to a dummy-atom PDB.
 All non-zero voxels become one carbon atom each (ALA residue).
