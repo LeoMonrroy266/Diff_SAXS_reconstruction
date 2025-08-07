@@ -1,11 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-voxel_to_pdb_tools.py – pure-Python replacement for the old scitbx/sastbx helpers
+result2pdb.py
 -------------------------------------------------------------------------------
-Requires:
-    numpy        (array maths)
-    biopython    (PDB reading/writing)
-    mrcfile      (write CCP4/MRC map)   pip install mrcfile
+Converts grid to PDB file for visualization
+
 """
 
 from __future__ import annotations

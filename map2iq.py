@@ -1,18 +1,16 @@
 # -*- coding: utf-8 -*-
 """
-saxs_utils.py  –  pure-NumPy replacement for cctbx/sastbx workflow
+map2iq.py
 ------------------------------------------------------------------
-Implements:
-    • ASCII I(q) reader  (read_iq_ascii)
-    • ED_map    class    (FFT-based I(q) calculation + scoring)
-    • run_withrmax() / run_withoutrmax() helper functions
-All math done with NumPy / SciPy (radial averaging).
+Reads and parses SAXS data
+Calculates SAXS profiles from voxel objects.
+FFT-based I(q) calculation + scoring
 """
 
-from __future__ import annotations
+
+import numpy as np
 from pathlib import Path
 from dataclasses import dataclass
-import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.metrics import r2_score
 try:
@@ -21,10 +19,6 @@ try:
 except ModuleNotFoundError:
     _have_scipy = False
 
-
-import numpy as np
-from pathlib import Path
-from dataclasses import dataclass
 
 @dataclass
 class IqData:
@@ -127,6 +121,20 @@ class ED_map:
     # ------------- public API ------------------
     def compute_saxs_profile(self, voxel: np.ndarray, save_plot: bool = False,
                              filename: str = "saxs_profile.png") -> np.ndarray:
+        """
+        Calculates the difference SAXS profile of generated voxel object and assumed starting structure
+        (generated voxel - starting structure).
+
+        Parameters
+        ----------
+        voxel : np.ndarray
+        save_plot : Bool, optional
+        filename : str, optional
+
+        Returns
+        -------
+        Difference SAXS curve interpolated to experimental q-range
+        """
         q, Iq = fft_intensity(voxel, voxel_size=self.voxel_size)
         dark_q, dark_I = fft_intensity(self.dark, voxel_size=self.voxel_size)  # calc scatter for dark
 
@@ -180,6 +188,16 @@ class ED_map:
         return numerator / denominator
 
     def target(self, voxel: np.ndarray) -> float:
+        """
+        Calculate the R² and Chi² between computed and experimental difference curves.
+        Parameters
+        ----------
+        voxel : ndarray
+
+        Returns
+        -------
+        r2 : float
+        """
         calc = self.compute_saxs_profile(voxel)
         # Use unit weights if no experimental error is given
         if self.exp_s is None:
@@ -189,10 +207,7 @@ class ED_map:
 
         # Apply least-squares scaling
         scale = self.best_scaling_factor(calc, self.exp_I)
-        calc = (scale * calc)
-        #calc = (scale * calc + off) / (scale * calc + off)[0]
-        #print(self.exp_I[0])
-        #exp = self.exp_I / self.exp_I[0]
+        calc = (scale * calc) # Scale to exp.
 
         # Score depending on availability of exp_s
         if self.exp_s is None:

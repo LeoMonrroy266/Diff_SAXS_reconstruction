@@ -1,3 +1,9 @@
+# -*- coding: utf-8 -*-
+"""
+processSAXS.py
+------------------------------------------------------------------
+Reads and process SAXS data file
+"""
 import numpy as np
 
 

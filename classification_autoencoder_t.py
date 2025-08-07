@@ -12,8 +12,8 @@ import numpy as np
 import tensorflow as tf
 
 # ───────────────────────── configuration ─────────────────────────
-Z_DIM      = 200        # latent size you asked for
-VOX_SHAPE  = (32, 32, 32, 3)  # 3 classes output
+Z_DIM      = 200        #  Size of latent space
+VOX_SHAPE  = (32, 32, 32, 3)  # Size of input vector
 K_INIT     = "he_normal"
 
 # ─────────────────── model architecture (same as training) ──────
@@ -105,6 +105,17 @@ def convert_class_indices_to_labels(class_array: np.ndarray) -> np.ndarray:
 
 # ─────────────────────── loading utilities ───────────────────────
 def _load_weights(model, weights_path: Path | str):
+    """
+       Load weights from a Keras model
+       Parameters
+       ----------
+       model : keras.Model
+       weights_path : str
+
+       Returns
+       -------
+
+       """
     weights_path = Path(weights_path)
     if weights_path.suffix == ".keras":
         # full SavedModel / .keras

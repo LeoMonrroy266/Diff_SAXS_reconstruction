@@ -12,8 +12,8 @@ import numpy as np
 import tensorflow as tf
 
 # ───────────────────────── configuration ─────────────────────────
-Z_DIM      = 200        # latent size you asked for
-VOX_SHAPE  = (32, 32, 32, 1)
+Z_DIM      = 200        # Size of latent space
+VOX_SHAPE  = (32, 32, 32, 1) # Size of input vector
 K_INIT     = "he_normal"
 
 # ─────────────────── model architecture (same as training) ──────
@@ -23,7 +23,7 @@ def _conv_block(x, filters, k=3, s=1):
     x = tf.keras.layers.BatchNormalization()(x)
     return tf.keras.layers.ReLU()(x)
 
-def build_autoencoder():
+def build_autoencoder(): # Building network
     inp = tf.keras.Input(shape=(32, 32, 32, 1))
 
     # ---- encoder ----
@@ -94,6 +94,17 @@ def build_autoencoder():
 
 # ─────────────────────── loading utilities ───────────────────────
 def _load_weights(model, weights_path: Path | str):
+    """
+    Load weights from a Keras model
+    Parameters
+    ----------
+    model : keras.Model
+    weights_path : str
+
+    Returns
+    -------
+
+    """
     weights_path = Path(weights_path)
     if weights_path.suffix == ".keras":
         # full SavedModel / .keras

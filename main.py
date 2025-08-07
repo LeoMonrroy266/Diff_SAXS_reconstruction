@@ -1,6 +1,7 @@
 # coding: utf-8
 """
-Genetic-algorithm driver  —  TensorFlow-2 / Keras version
+Main code for generating density based on experimental difference scattering using the Genetic-algorithm
+
 --------------------------------------------------------
 """
 from functools import partial
@@ -18,7 +19,7 @@ import auto_encoder_t_py3 as net         # <- helper you already have
 # ──────────────────────────── CLI  /  constants ────────────────────────────
 GPU_NUM     = 1                      # limit via CUDA_VISIBLE_DEVICES if needed
 BATCH_SIZE  = 10
-Z_DIM       = 200
+Z_DIM       = 200                    # Size of the latent space
 np.set_printoptions(precision=10)
 
 p = argparse.ArgumentParser()
@@ -33,10 +34,11 @@ p.add_argument("--max_iter",     type=int,    default=80)
 #p.print_help()
 args = p.parse_args()
 
-out_dir = Path(args.output_folder)
+out_dir = Path(args.output_folder) # Folder where data will be saved
 out_dir.mkdir(parents=True, exist_ok=True)
 
 # ──────────────────── Load trained auto-encoder (GPU) ───────────────────────
+# Starts model with stored weights for decoding
 ckpt = next(Path(args.model_path).glob("*.keras"), None) \
     or next(Path(args.model_path).glob("*.h5"))
 
@@ -45,9 +47,10 @@ net._load_weights(AUTO, ckpt)        # sets weights for encoder+decoder
 print(f"Loaded weights from {ckpt.name}")
 
 # ─────────────────── Latent initialisation stats  ───────────────────────────
+# Initialized random latent space from starting file
 init_stats = np.loadtxt(Path(args.model_path) /
-                        "genegroup_init_parameter_2.txt")
-##################Might need to change########################################
+                        "genegroup_init_parameter_2.txt") # Might need to adapt this for my cause
+
 # ───────────────────────── generic thread helper ────────────────────────────
 class MyThread(threading.Thread):
     def __init__(self, fn, *a):
@@ -56,6 +59,8 @@ class MyThread(threading.Thread):
     def result(self): return self.ret
 
 # ────────────────────────────  GA class  ────────────────────────────────────
+# Main class that runs the genetic algorithm operations to optimize latent space based
+# on the match agains the experimental data
 class Evolution:
     def __init__(self, target_path, dark_voxel, mode, rmin, rmax, max_iter=80):
         self.dark_voxel = dark_voxel  # store dark voxel grid
@@ -94,7 +99,7 @@ class Evolution:
                for c in np.array_split(lat, max(1,len(lat)//BATCH_SIZE))]
         return np.concatenate(out)
 
-    # ───── region_process replaces sess.run ─────
+    # ───── region_process ─────
     def _region_process(self, cubes):
         """Keep largest connected region; re-encode with ENCODER."""
         batch  = cubes.shape[0]
@@ -148,7 +153,7 @@ class Evolution:
                 if np.random.rand() < 0.8:
                     g[i,a:b], g[i+1,a:b] = g[i+1,a:b].copy(), g[i,a:b].copy()
 
-    # ───── mutation (unchanged, just numpy) ─────
+    # ───── mutation ─────
     def _mutate(self, g):
         if self.mode=="withoutrmax":
             mu, sigma = self.top_r.mean(), self.top_r.std()
@@ -178,7 +183,7 @@ class Evolution:
                 out.append(self.group[b] if a<b else self.group[a])
         return np.array(out, np.float32)
 
-    # ───── GA iteration loop (unchanged logic) ─────
+    # ───── GA iteration loop  ─────
     def iterate(self):
         counter = 0
         prev_best = 0
@@ -204,7 +209,7 @@ class Evolution:
 @staticmethod
 def add_propagated_difference(a, b):
     """
-    Adds a + b but only adds parts of b connected (directly or indirectly) to a,
+    Adds a + b but only adds parts of b connected (directly or indirectly) to a
     propagating through connected voxels in b.
     b can have -1, 0, 1 values.
 
@@ -244,8 +249,6 @@ def add_propagated_difference(a, b):
 
     return result, b_masked
 
-
-
 # ─────────────────── pre-process SAXS  ───────────────────────────
 process_result = ps.process(args.iq_path)
 if len(process_result)==2:
@@ -257,18 +260,18 @@ target_path = out_dir/"processed_saxs.iq"
 mode = "withoutrmax" if args.rmax==0 else "withrmax"
 
 # ─────────────────── pre-process dark model   ───────────────────────────
-dark_voxel = pdb2_voxel_no_tbx.main(args.dark_model, 'dark', out_dir)
+dark_voxel = pdb2_voxel_no_tbx.main(args.dark_model, 'dark', out_dir) # Staring structure
 np.save(f'{out_dir}/dark.npy', dark_voxel)
 result2pdb.write_single_pdb(dark_voxel, out_dir, 'dark.pdb', rmax=50)
 # ─────────────────── run GA, save best shape ─────────────────────
 ga = Evolution(target_path, dark_voxel, mode, args.rmax_start, args.rmax_end+1, max_iter=args.max_iter)
 best_lat = ga.iterate()
-best_voxel = ga._decode_batch(best_lat[:Z_DIM][None,:])[0]
+best_voxel = ga._decode_batch(best_lat[:Z_DIM][None,:])[0] # Result from genetic algorithm
 # ─────────────────── save best diff map ─────────────────────
 np.save(f'{out_dir}/best_voxel.npy', best_voxel)
 result2pdb.write_single_pdb(best_voxel, out_dir, 'diff.pdb',rmax=50)
 # ─────────────────── save extrapolated light ───────────────
-best_light, diff_mask = add_propagated_difference(dark_voxel,best_voxel)
+best_light, diff_mask = add_propagated_difference(dark_voxel,best_voxel) # Add starting and best voxel to produce light structure
 np.save(f'{out_dir}/best_light.npy', best_light) #
 result2pdb.write_single_pdb(best_light, out_dir, 'light.pdb',rmax=50)
 result2pdb.write_single_pdb(diff_mask, out_dir, 'diff_mask.pdb',rmax=50)

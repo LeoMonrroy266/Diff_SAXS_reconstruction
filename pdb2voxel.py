@@ -1,3 +1,9 @@
+# -*- coding: utf-8 -*-
+"""
+pdb2voxel.py
+------------------------------------------------------------------
+Converts PDB files to 3D voxel object
+"""
 import sys
 import numpy as np
 from Bio.PDB import PDBParser

@@ -1,13 +1,21 @@
+# -*- coding: utf-8 -*-
+"""
+Helper for inspecting training data from tfrecords
+Randomly samples N grids and returns them as .pdb files for visualisation
+
+* build_autoencoder() returns (auto, encoder, decoder)
+* decode_latent()     : latent  → reconstruction
+* encode_decode()     : voxel   → reconstruction
+"""
+
 import tensorflow as tf
 import numpy as np
 from pathlib import Path
 import random
+from result2pdb import write_single_pdb
 
-# Your TFRecord voxel shape
-VOXEL_SHAPE = (32, 32, 32)
 
-# Import your function
-from result2pdb import write_single_pdb  # Replace with actual module name
+VOXEL_SHAPE = (32, 32, 32) # Shape of sample vector
 
 
 def parse_fn(example_proto):

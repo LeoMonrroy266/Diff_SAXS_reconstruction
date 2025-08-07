@@ -1,3 +1,10 @@
+# -*- coding: utf-8 -*-
+"""
+pdb2voxel_batch.py
+------------------------------------------------------------------
+Converts multiple PDB files in directory to voxel objects by parallelization and stores them.
+"""
+
 import os
 import glob
 import sys
@@ -10,8 +17,8 @@ def process_file(args):
     pdbfile, outdir = args
     basename = os.path.splitext(os.path.basename(pdbfile))[0]
 
-    labeled_path = os.path.join(outdir, f"{basename}_labeled_cube.npy")
-    continuous_path = os.path.join(outdir, f"{basename}_continous_cube.npy")
+    labeled_path = os.path.join(outdir, f"{basename}_labeled_cube.npy") # Grid with Gaussian applied
+    continuous_path = os.path.join(outdir, f"{basename}_continous_cube.npy") # No Gaussian applied
 
     if os.path.exists(labeled_path) and os.path.exists(continuous_path):
         return f"Skipped {basename} (already exists)"
