@@ -9,7 +9,7 @@ from pathlib import Path
 import argparse, time, threading, multiprocessing as mp, os
 import numpy as np
 import tensorflow as tf
-import map2iq, region_search, result2pdb, pdb2_voxel_no_tbx, voxel2pdb
+import map2iq, region_search, result2pdb, pdb2voxel
 import matplotlib.pyplot as plt
 import processSaxs as ps
 from scipy.ndimage import label, generate_binary_structure, binary_dilation
@@ -270,7 +270,7 @@ target_path = out_dir/"processed_saxs.iq"
 mode = "withoutrmax" if args.rmax==0 else "withrmax"
 
 # ─────────────────── pre-process dark model   ───────────────────────────
-dark_voxel = pdb2_voxel_no_tbx.main(args.dark_model, 'dark', out_dir)
+dark_voxel = pdb2voxel.main(args.dark_model, 'dark', out_dir)
 np.save(f'{out_dir}/dark.npy', dark_voxel)
 result2pdb.write_single_pdb(dark_voxel, out_dir, 'dark.pdb', rmax=50)
 # ─────────────────── run GA, save best shape ─────────────────────
