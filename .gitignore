@@ -1,0 +1,10 @@
+# Ignore everything
+*.weights.h5
+*.keras
+
+# But don't ignore .gitignore itself
+!.gitignore
+
+# Allow Python files
+!*.py
+
