@@ -4,6 +4,7 @@ Inference helpers for the 3-D voxel auto-encoder (TF-2 / Keras)
 
 * build_autoencoder() returns (auto, encoder, decoder)
 * decode_latent()     : latent  → reconstruction
+* encode_voxels()     : voxel   → latent
 * encode_decode()     : voxel   → reconstruction
 """
 
@@ -23,8 +24,8 @@ def _conv_block(x, filters, k=3, s=1):
     x = tf.keras.layers.BatchNormalization()(x)
     return tf.keras.layers.ReLU()(x)
 
-def build_autoencoder(): # Building network
-    inp = tf.keras.Input(shape=(32, 32, 32, 1))
+def build_autoencoder():
+    inp = tf.keras.Input(shape=VOX_SHAPE)
 
     # ---- encoder ----
     x = _conv_block(inp, 64)
@@ -41,40 +42,37 @@ def build_autoencoder(): # Building network
 
     x = tf.keras.layers.Flatten()(x)
     z = tf.keras.layers.Dense(Z_DIM, activation="tanh",
-                              kernel_initializer="he_normal",
+                              kernel_initializer=K_INIT,
                               name="latent")(x)
 
     # ---- decoder ----
     d = tf.keras.layers.Dense(8*8*8*32, activation="relu",
-                              kernel_initializer="he_normal",
+                              kernel_initializer=K_INIT,
                               name="dense")(z)
     d = tf.keras.layers.Reshape((8, 8, 8, 32), name="reshape")(d)
 
     d = tf.keras.layers.Conv3DTranspose(64, 5, 2, padding="same",
-                                        kernel_initializer="he_normal",
+                                        kernel_initializer=K_INIT,
                                         name="conv3d_transpose")(d)
     d = tf.keras.layers.BatchNormalization(name="batch_norm")(d)
     d = tf.keras.layers.ReLU(name="relu")(d)
 
     d = tf.keras.layers.Conv3DTranspose(128, 5, 2, padding="same",
-                                        kernel_initializer="he_normal",
+                                        kernel_initializer=K_INIT,
                                         name="conv3d_transpose_1")(d)
     d = tf.keras.layers.BatchNormalization(name="batch_norm_1")(d)
     d = tf.keras.layers.ReLU(name="relu_1")(d)
 
     d = tf.keras.layers.Conv3D(1, 3, padding="same",
-                               kernel_initializer="he_normal",
-                               name="conv3d_final")(d)  # changed name here
+                               kernel_initializer=K_INIT,
+                               name="conv3d_final")(d)
     out = tf.keras.layers.Activation("tanh", name="tanh")(d)
 
-    # full autoencoder model
     auto = tf.keras.Model(inp, out, name="voxel_autoencoder")
     auto.compile(optimizer=tf.keras.optimizers.Adam(5e-4), loss="mse")
 
-    # encoder model: input -> latent vector
     encoder = tf.keras.Model(inp, z, name="encoder")
 
-    # decoder model: latent vector -> reconstruction
     latent_in = tf.keras.Input(shape=(Z_DIM,), name="latent_in")
     x = auto.get_layer("dense")(latent_in)
     x = auto.get_layer("reshape")(x)
@@ -90,24 +88,10 @@ def build_autoencoder(): # Building network
 
     return auto, encoder, decoder
 
-
-
 # ─────────────────────── loading utilities ───────────────────────
 def _load_weights(model, weights_path: Path | str):
-    """
-    Load weights from a Keras model
-    Parameters
-    ----------
-    model : keras.Model
-    weights_path : str
-
-    Returns
-    -------
-
-    """
     weights_path = Path(weights_path)
     if weights_path.suffix == ".keras":
-        # full SavedModel / .keras
         loaded = tf.keras.models.load_model(weights_path, compile=False)
         model.set_weights(loaded.get_weights())
     else:
@@ -117,42 +101,38 @@ def _load_weights(model, weights_path: Path | str):
 def decode_latent(z_vectors: np.ndarray,
                   weights_path: str | Path,
                   dtype=np.float32) -> np.ndarray:
-    """
-    Parameters
-    ----------
-    z_vectors : (N, Z_DIM) latent array
-    weights_path : path to .weights.h5 or .keras saved in training
-    Returns
-    -------
-    recon : (N, 32, 32, 32, 1) numpy array in range [-1, 1]
-    """
     _, _, decoder = build_autoencoder()
     _load_weights(decoder, weights_path)
-    recon = decoder.predict(z_vectors.astype(dtype), verbose=0)
-    return recon
+    return decoder.predict(z_vectors.astype(dtype), verbose=0)
 
+def encode_voxels(voxels: np.ndarray,
+                  weights_path: str | Path,
+                  dtype=np.float32) -> np.ndarray:
+    """
+    Encode voxel grids into latent vectors.
+    voxels : (N, 32, 32, 32, 1)
+    Returns : (N, Z_DIM) latent array
+    """
+    _, encoder, _ = build_autoencoder()
+    _load_weights(encoder, weights_path)
+    return encoder.predict(voxels.astype(dtype), verbose=0)
 
 def encode_decode(voxels: np.ndarray,
                   weights_path: str | Path,
                   dtype=np.float32) -> np.ndarray:
-    """
-    Run full auto-encoder on input voxels.
-    voxels : (N, 32, 32, 32, 1) array in same scaling as training
-    Returns reconstructions of same shape.
-    """
     auto, _, _ = build_autoencoder()
     _load_weights(auto, weights_path)
     return auto.predict(voxels.astype(dtype), verbose=0)
-
 
 # ────────────────────────── example usage ────────────────────────
 if __name__ == "__main__":
     import argparse, sys
 
-    parser = argparse.ArgumentParser(description="Decode latent vectors or voxel grids.")
+    parser = argparse.ArgumentParser(description="Encode or decode with voxel autoencoder.")
     parser.add_argument("weights", help="Path to weights (.weights.h5 or .keras)")
-    parser.add_argument("--latent",  help="N×Z numpy file to decode")
-    parser.add_argument("--voxels",  help="N×32×32×32×1 numpy file to encode+decode")
+    parser.add_argument("--latent", help="N×Z numpy file to decode")
+    parser.add_argument("--voxels", help="N×32×32×32×1 numpy file to encode+decode")
+    parser.add_argument("--encode", help="N×32×32×32×1 numpy file to encode only")
     args = parser.parse_args()
 
     if args.latent:
@@ -169,6 +149,12 @@ if __name__ == "__main__":
         np.save(out, rec)
         print(f"Encoded+decoded {vx.shape[0]} grids → {out}")
 
-    else:
-        sys.exit("Provide --latent or --voxels input.")
+    elif args.encode:
+        vx = np.load(args.encode)
+        latents = encode_voxels(vx, args.weights)
+        out = Path(args.encode).with_suffix(".latent.npy")
+        np.save(out, latents)
+        print(f"Encoded {vx.shape[0]} grids to latent space → {out}")
 
+    else:
+        sys.exit("Provide --latent, --voxels, or --encode input.")
