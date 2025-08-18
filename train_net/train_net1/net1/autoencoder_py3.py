@@ -5,16 +5,16 @@ import glob
 import os
 
 # ────────────────────────────  CONFIG  ────────────────────────────
-BATCH_SIZE        = 8
+BATCH_SIZE        = 16
 NUM_EPOCHS        = 15
 SEED              = 56297
 Z_DIM             = 3000
-TRAIN_SAMPLES     = 300_000  # number of samples per training epoch
+TRAIN_SAMPLES     = 50_000 # number of samples per training epoch
 TEST_SAMPLES      = 10_000   # number of samples for test evaluation
 AUTOTUNE          = tf.data.AUTOTUNE
 
 # ─────────────────────  I/O paths (create if needed) ──────────────
-cur_path              = os.getcwd()
+cur_path              = '/home/leonardo/Diff_SAXS_reconstruction/train_net/train_net1/net1'
 folder_to_save_model  = os.path.join(cur_path, 'model_normal_pisa')
 folder_to_save_log    = os.path.join(cur_path, 'log')
 os.makedirs(folder_to_save_model, exist_ok=True)
@@ -71,7 +71,7 @@ def build_model():
     x = conv_block(x, 128)
 
     x = tf.keras.layers.Flatten()(x)
-    z = tf.keras.layers.Dense(Z_DIM, activation="tanh",
+    z = tf.keras.layers.Dense(Z_DIM, activation="relu",
                               kernel_initializer="he_normal")(x)
 
     # ---- decoder ----
@@ -91,15 +91,15 @@ def build_model():
 
     x = tf.keras.layers.Conv3D(1, 3, padding="same",
                                kernel_initializer="he_normal")(x)
-    out = tf.keras.activations.tanh(x)
-
+    out = tf.keras.activations.sigmoid(x)  # Used when training on normal data
+    # out = tf.keras.activations.tanh(x)
     model = tf.keras.Model(inp, out, name="voxel_autoencoder")
-    model.compile(optimizer=tf.keras.optimizers.Adam(5e-4), loss="mse")
+    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.0005), loss="binary_crossentropy")
     return model
 
 # ───────────────────────────  Data  ───────────────────────────────
-train_dir = "/home/leonardo/SAXS_reconstruction/changed_network/train_net/tfrecord_chunks/train"
-test_dir  = "/home/leonardo/SAXS_reconstruction/changed_network/train_net/tfrecord_chunks/test"
+train_dir = "/home/leonardo/SAXS_reconstruction/changed_network/train_net/dataset/PISA_aligned/voxels/train"
+test_dir  = "/home/leonardo/SAXS_reconstruction/changed_network/train_net/dataset/PISA_aligned/voxels/test"
 
 train_ds = get_dataset_from_dir(train_dir, BATCH_SIZE)
 test_ds  = get_dataset_from_dir(test_dir,  BATCH_SIZE)

@@ -21,25 +21,31 @@ from Bio.PDB.Model import Model
 from Bio.PDB.Chain import Chain
 from Bio.PDB.Residue import Residue
 from Bio.PDB.Atom import Atom
+from Bio.PDB import PDBParser, MMCIFParser
 
 def voxel_to_pdb(vox: np.ndarray,
                  rmax: float,
                  pdb_file: str | Path,
                  atom_name_pos: str = "C",   # atom name for positive voxels
                  atom_name_neg: str = "O",   # atom name for negative voxels
-                 residue: str = "DUM",
+                 residue: str = "ALA",
                  ccp4_file: str | Path | None = None,
                  pdb_reference_file: str | Path | None = None) -> None:
+    # grid_size = vox.shape[0]
+    if vox.shape[0] == 1:
+        vox = vox.squeeze(0)  # removes the first dimension if it's 1
+        grid_size = vox.shape[0]
+    else:
+        grid_size = vox.shape[0]
 
     idx = np.argwhere(vox != 0)
     if idx.size == 0:
-        raise ValueError("voxel grid contains no foreground voxels")
+        print(f"Warning: voxel grid contains no foreground voxels, skipping {pdb_file}")
+        return  # Exit the function gracefully without error
 
-    grid_size = vox.shape[0]
     box_size = 2 * rmax
     voxel_size = box_size / (grid_size - 1)
     coords = idx * voxel_size - rmax  # Convert voxel indices to Å coordinates centered at 0
-
     # Build structure
     model = Model(0)
     chain = Chain("A")
@@ -77,6 +83,7 @@ def voxel_to_pdb(vox: np.ndarray,
         io.save(str(cif_file))
         print(f"Saved as mmCIF: {cif_file}")
     else:
+        pdb_file = pdb_file.with_suffix('.pdb')
         io = PDBIO()
         io.set_structure(model)
         io.save(str(pdb_file))
@@ -102,8 +109,24 @@ def kabsch_align(P: np.ndarray, Q: np.ndarray) -> tuple[np.ndarray, float]:
 
 
 def pdb_coords(fname: str | Path) -> np.ndarray:
-    """xyz array (N × 3) of all ATOM/HETATM records."""
-    atoms = PDBParser(QUIET=True).get_structure("x", fname).get_atoms()
+    """Return xyz array (N × 3) of all ATOM/HETATM records from PDB or CIF."""
+    fname = Path(fname)
+    if not fname.exists():
+        raise FileNotFoundError(f"{fname} does not exist")
+
+    if fname.suffix.lower() == ".cif":
+        parser = MMCIFParser(QUIET=True)
+    elif fname.suffix.lower() == ".pdb":
+        parser = PDBParser(QUIET=True)
+    else:
+        raise ValueError(f"Unsupported file type: {fname.suffix}")
+
+    structure = parser.get_structure("x", str(fname))
+    atoms = list(structure.get_atoms())
+
+    if len(atoms) == 0:
+        raise ValueError(f"No atoms found in {fname}")
+
     return np.array([a.coord for a in atoms], float)
 
 
@@ -118,55 +141,11 @@ def estimate_rmax_bounding_box(pdb_path: str | Path) -> float:
     return distances.max()
 
 
-
-# ───────────────────── high-level API (unchanged names) ───────────────────────
-def write2pdb(group: np.ndarray,
-              rmax: float,
-              output_folder: str | Path,
-              iq_file: str | Path | None = None,
-              target_pdb: str | Path | None = None) -> None:
-    """
-    Average many voxel models, write out ·pdb and ·ccp4, align vs. target.
-    """
-    out_dir = Path(output_folder); out_dir.mkdir(parents=True, exist_ok=True)
-    tmp2 = out_dir/"sub2"; tmp3 = out_dir/"sub3"
-    tmp2.mkdir(exist_ok=True); tmp3.mkdir(exist_ok=True)
-
-    # ── 1 write every voxel to PDB ───────────────────────────────
-    for i, vox in enumerate(group):
-        voxel_to_pdb(vox, rmax, tmp2/f"{i}.pdb")
-
-    # ── 2 align each PDB onto #0 using Kabsch ────────────────────
-    ref = pdb_coords(tmp2/"0.pdb")
-    ave = np.zeros_like(group[0], float)
-    for i in range(len(group)):
-        mob_xyz = pdb_coords(tmp2/f"{i}.pdb")
-        aligned, _ = kabsch_align(ref, mob_xyz)
-        # overwrite file with aligned coords
-        voxel_to_pdb(group[i], rmax, tmp3/f"{i}.pdb")   # coord scaling
-        # shift coordinates in file
-        atoms = PDBParser(QUIET=True).get_structure("m", tmp3/f"{i}.pdb")
-        for a, new in zip(atoms.get_atoms(), aligned):
-            a.set_coord(new)
-        PDBIO().set_structure(atoms); PDBIO().save(tmp3/f"{i}.pdb")
-        # back-map to voxel grid
-        vox = pdb_to_voxel(tmp3/f"{i}.pdb", grid=group[0].shape, rmax=rmax)
-        ave += vox
-
-    ave /= len(group)                          # average density
-    binarised = (ave > 0.3).astype(np.uint8)   # same threshold as before
-
-    # save merged PDB & CCP4
-    voxel_to_pdb(binarised, rmax, out_dir/"out.pdb")
-
-
-    # ── 3 align optional target_pdb ~ quick CC ───────────────────
-    if target_pdb:
-        ref_xyz = pdb_coords(out_dir / f'{name}.pdb')
-        mob_xyz = pdb_coords(target_pdb)
-        _, rmsd = kabsch_align(ref_xyz, mob_xyz)
-        print(f"RMSD(out ↔ target) = {rmsd:6.3f} Å")
-
+def write_bead(voxel_grid, threshold=0.5):
+    labeled = np.zeros(voxel_grid.shape, dtype=int)
+    labeled[voxel_grid >= threshold] = 1
+    labeled[voxel_grid <= -threshold] = -1
+    return labeled
 
 def write_single_pdb(voxel: np.ndarray,
                      output_folder: str | Path,
@@ -178,38 +157,43 @@ def write_single_pdb(voxel: np.ndarray,
 
     out_dir = Path(output_folder)
     out_dir.mkdir(parents=True, exist_ok=True)
-
     # If no rmax is provided, estimate from reference PDB
     if rmax is None:
         if rmax_ref_pdb is None:
             raise ValueError("Either rmax or rmax_ref_pdb must be provided")
         rmax = estimate_rmax_bounding_box(rmax_ref_pdb)
-
+    voxel = write_bead(voxel)
     voxel_to_pdb(voxel, rmax, out_dir/name, ccp4_file=f'{out_dir}/{name}.ccp4')
 
-
     if target_pdb:
-        ref_xyz = pdb_coords(out_dir/f'{name}.pdb')
-        mob_xyz = pdb_coords(target_pdb)
-        _, rmsd = kabsch_align(ref_xyz, mob_xyz)
-        print(f"RMSD(out ↔ target) = {rmsd:6.3f} Å")
+        # Determine which output file exists: PDB or CIF
+        out_pdb = out_dir / f"{name}.pdb"
+        out_cif = out_dir / f"{name}.cif"
+
+        if out_pdb.exists():
+            ref_file = out_pdb
+        elif out_cif.exists():
+            ref_file = out_cif
+        else:
+            print(f"⚠ No output PDB/CIF found for {name}, skipping RMSD.")
+            return
+
+        # Only compute RMSD if the file contains atoms
+        print(ref_file)
+        try:
+            ref_xyz = pdb_coords(ref_file)
+            mob_xyz = pdb_coords(target_pdb)
 
 
+        except ValueError as e:
+            print(f"{e}, skipping RMSD")
+            return
 
-def pdb_to_voxel(pdb_file: str | Path,
-                 grid=(31, 31, 31),
-                 rmax: float = 15.0) -> np.ndarray:
-    """
-    Very coarse 'back projection': each atom occupies the nearest grid node.
-    """
-    coords = pdb_coords(pdb_file)
-    centre = coords.mean(axis=0)
-    scale  = (grid[0]//2) / rmax
-    idx = np.rint((coords - centre) * scale + (grid[0]-1)/2).astype(int)
-    idx = np.clip(idx, 0, grid[0]-1)
-    vox = np.zeros(grid, np.uint8)
-    vox[idx[:,0], idx[:,1], idx[:,2]] = 1
-    return vox
+        if ref_xyz.shape[0] != mob_xyz.shape[0]:
+            print(f"Skipping RMSD — atom count mismatch ({ref_xyz.shape[0]} vs {mob_xyz.shape[0]})")
+        else:
+            _, rmsd = kabsch_align(ref_xyz, mob_xyz)
+            print(f"RMSD(out ↔ target) = {rmsd:6.3f} Å")
 
 
 def cal_cc(voxel_group: np.ndarray,

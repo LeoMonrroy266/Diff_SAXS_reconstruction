@@ -6,10 +6,13 @@ Main code for generating density based on experimental difference scattering usi
 """
 from functools import partial
 from pathlib import Path
-import argparse, time, threading, multiprocessing as mp, os
+import argparse, time, threading, multiprocessing , os
 import numpy as np
 import tensorflow as tf
-import map2iq, region_search, result2pdb, pdb2_voxel_no_tbx, voxel2pdb
+
+import map2iq_shape
+import map2iq_shape as map2iq
+import region_search, result2pdb, pdb2voxel
 import matplotlib.pyplot as plt
 import processSaxs as ps
 from scipy.ndimage import label, generate_binary_structure, binary_dilation
@@ -33,7 +36,7 @@ p.add_argument("--rmax_end",     type=float,  default=300)
 p.add_argument("--max_iter",     type=int,    default=80)
 #p.print_help()
 args = p.parse_args()
-
+print(args)
 out_dir = Path(args.output_folder) # Folder where data will be saved
 out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -54,15 +57,21 @@ init_stats = np.loadtxt(Path(args.model_path) /
 # ───────────────────────── generic thread helper ────────────────────────────
 class MyThread(threading.Thread):
     def __init__(self, fn, *a):
-        super().__init__(); self.fn, self.a, self.ret = fn, a, None
-    def run(self): self.ret = self.fn(*self.a)
-    def result(self): return self.ret
+        super().__init__()
+        self.fn, self.a, self.ret = fn, a, None
+
+    def run(self):
+        self.ret = self.fn(*self.a)  # must return tuple (z_out, clean_volumes)
+
+    def result(self):
+        return self.ret
+
 
 # ────────────────────────────  GA class  ────────────────────────────────────
 # Main class that runs the genetic algorithm operations to optimize latent space based
 # on the match agains the experimental data
 class Evolution:
-    def __init__(self, target_path, dark_voxel, mode, rmin, rmax, max_iter=80):
+    def __init__(self, target_path, dark_voxel, mode, rmin, rmax, max_iter=80, rcenter=None):
         self.dark_voxel = dark_voxel  # store dark voxel grid
         self.target_path = target_path
         self.mode, self.rmin, self.rmax = mode, rmin, rmax
@@ -78,21 +87,37 @@ class Evolution:
         self._rank()
         if self.mode == "withoutrmax":
             self.top_r = self.group[:100,-1].copy()
+        else:
+            self.rcenter = rcenter
         print("init top-5:", self.score[:5])
 
     # ───── population init ─────
     def _init_group(self, n):
         g = np.random.normal(init_stats[:, 0], init_stats[:, 1], (n, self.gene_len))
+
         if self.mode == "withoutrmax":
-            r = np.random.randint(self.rmin, self.rmax, (n,1))
-            g = np.hstack([g, r])
+            r = np.random.randint(self.rmin, self.rmax, (n, 1))
+            g = np.hstack([g, r])  # now shape is (n, 201)
         return g.astype(np.float32)
+
+     # ───── encode helpers (GPU Keras) ─────
+
+    def _encode_batch(self, voxel):
+        z = ENCODER.predict(voxel, batch_size=BATCH_SIZE, verbose=0)
+        return z
+
+    def _encode_group(self, lat):
+        lat = [np.pad(c, pad_width=((0, 1), (0, 1), (0, 1)), mode='constant') for c in lat]
+        out = [self._encode_batch(c)
+               for c in np.array_split(lat, max(1,len(lat)//BATCH_SIZE))]
+        return np.concatenate(out)
 
     # ───── decode helpers (GPU Keras) ─────
     def _decode_batch(self, lat):
         v = DECODER.predict(lat, batch_size=BATCH_SIZE, verbose=0)
         v = (v > 0.1).astype(np.int8)[...,0]          # (N,31,31,31)
         return v[:,:31,:31,:31]
+
 
     def _decode_group(self, lat):
         out = [self._decode_batch(c)
@@ -101,46 +126,104 @@ class Evolution:
 
     # ───── region_process ─────
     def _region_process(self, cubes):
-        """Keep largest connected region; re-encode with ENCODER."""
-        batch  = cubes.shape[0]
-        vox4d  = np.zeros((batch,32,32,32,1), np.float32)
-        vox4d[:,:31,:31,:31,0] = cubes
-        z  = ENCODER.predict(vox4d, batch_size=BATCH_SIZE, verbose=0)
-        # region filter
-        clean = []; z_out = []
-        for zi, vol in zip(z, cubes):
-            vol, nreg = region_search.find_biggest_region(vol)
-            clean.append(vol); z_out.append(zi)
-        return np.vstack(z_out), np.stack(clean)
+        cubes = (cubes > 0.1).astype(int)
+
+        regions = np.array([region_search.find_biggest_region(vol)[0] for vol in cubes])
+        n_regions = np.array([region_search.find_biggest_region(vol)[1] for vol in cubes])
+
+        #clean_voxels = np.zeros((300 ,31, 31, 31))  # store cleaned voxel grids
+
+        #remaining_indices = np.arange(len(cubes))  # indices of cubes still to process
+        return regions, n_regions
+        """
+        current = cubes[remaining_indices]
+        while len(remaining_indices) > 0:
+
+            # Run the "find_biggest_region" pass
+            regions = np.array([region_search.find_biggest_region(vol)[0] for vol in current])
+            n_regions = np.array([region_search.find_biggest_region(vol)[1] for vol in current])
+
+            # Boolean mask of which ones are done
+            done_mask = (n_regions == 1)
+
+            # Map back to global indices
+            done_indices = remaining_indices[done_mask]  # global indices
+            # save results
+            if len(done_indices) > 0:
+                clean_voxels[done_indices] = regions[done_mask]
+                #clean_latent[done_indices] = self._encode_group(regions[done_mask])
+            # update remaining
+            remaining_indices = remaining_indices[~done_mask]  # now lengths match
+            current = current[~done_mask]
+
+            # Encode/decode remaining cubes for next iteration
+            if len(remaining_indices) > 0:
+                processed = self._encode_group(regions[~done_mask])
+                processed = self._decode_group(processed)
+
+                current = processed
+        clean_latent = self._encode_group(clean_voxels)
+        return clean_latent, clean_voxels
+        """
+
+    def _sample_start(self, std=0.5):
+        # Normal distribution centered at 0 with some std,
+        # then clipped to [-1, 1]
+        samples = np.random.normal(loc=0.0, scale=std, size=(self.group_num, self.gene_len))
+        samples = np.clip(samples, -1.0, 1.0)
+        return samples.astype(np.float32)
 
     # ───── fitness ─────
     def _score(self, group):
-        vox = self._decode_group(group[:,:self.gene_len])
-        res = np.array(list(map(add_propagated_difference, [self.dark_voxel] * vox.shape[0], vox)))  #Extrapolate light gri
-        # Unzip into two separate lists
-        combined_vox, b_parts = zip(*res)
+        """
+        Decode volumes from genes, clean regions, reprocess with GPUs, and compute scores.
+        Maintains original function names and behavior.
+        """
+        # --- Step 1: Decode ---
+        t_decode1 = time.time()
+        vox = self._decode_group(group[:, :self.gene_len])
+        t_decode2 = time.time()
+        # print("decode_time:", t_decode2 - t_decode1)
 
-        # Convert to numpy arrays
-        combined_vox = np.array(combined_vox)
-        b_parts = np.array(b_parts)
+        # --- Step 2: Clean volumes and update latents ---
+        t_region1 = time.time()
+        vox, regions = self._region_process(vox)  # returns (latent_codes, cleaned_voxels)
+        new_z = self._encode_group(vox)
+        group[:, :self.gene_len] = new_z
+        t_region2 = time.time()
+        # print("region_process_time:", t_region2 - t_region1)
 
+        # --- Step 3: Prepare inputs for scoring ---
+        t_score1 = time.time()
         if self.mode == "withoutrmax":
-            r = group[:,-1,None]
-            X = np.hstack([vox.reshape(vox.shape[0],-1), r])
-            with mp.Pool(20) as P:
-                func = partial(map2iq.run_withoutrmax, iq_file=self.target_path,dark_model=dark_voxel)
+            r = group[:, -1, None]  # shape: (batch, 1)
+            X = [(vox[i], r[i, 0]) for i in range(len(vox))]
+
+            # Parallel evaluation
+            with multiprocessing.Pool(processes=20) as P:
+                func = partial(map2iq.run_withoutrmax, iq_file=self.target_path, dark_model=dark_voxel)
                 res = np.array(P.map(func, X))
-            group[:,-1] = res[:,1]
-            return res[:,0]
+
+            group[:, -1] = res[:, 1]
+            group_score = res[:, 0]
+
         else:
-            with mp.Pool(20) as P:
-                func = partial(map2iq.run_withrmax, iq_file=self.target_path, dark_model=dark_voxel)
-                res = np.array(P.map(func, combined_vox))
-                return res
+            # mode with rmax
+            with multiprocessing.Pool(processes=20) as P:
+                func = partial(map2iq.run_withrmax, iq_file=self.target_path,
+                               dark_model=dark_voxel, rmax_center=self.rcenter)
+                res = np.array(P.map(func, vox))
+
+            group_score = res
+
+        t_score2 = time.time()
+        # print("compute_score_time:", t_score2 - t_score1)
+
+        return group_score
 
     def _rank(self):
-        #idx = np.argsort(self.score)# sorts based on lowest chi2
-        idx = np.argsort(self.score)[::-1] # Sorts on best r²
+        idx = np.argsort(self.score)# sorts based on lowest chi2
+        #idx = np.argsort(self.score)[::-1] # Sorts on best r²
         self.group, self.score = self.group[idx], self.score[idx]
 
     # ───── crossover ─────
@@ -160,7 +243,7 @@ class Evolution:
         for i in range(self.inherit-self.remain):
             r = np.random.rand(self.gene_len+1)
             for j in range(self.gene_len):
-                if r[j] < 0.1: # changed from 0.05 to 0.1
+                if r[j] < 0.05:
                     g[i,j] = abs(np.random.normal(init_stats[j,0],
                                                   init_stats[j,1]))
             if self.mode=="withoutrmax" and r[-1] < 0.5:
@@ -258,24 +341,31 @@ saxs = process_result[0]
 np.savetxt(out_dir/"processed_saxs.iq", saxs)
 target_path = out_dir/"processed_saxs.iq"
 mode = "withoutrmax" if args.rmax==0 else "withrmax"
+saxs_data = map2iq.read_iq_ascii(args.iq_path)
 
 # ─────────────────── pre-process dark model   ───────────────────────────
-dark_voxel = pdb2_voxel_no_tbx.main(args.dark_model, 'dark', out_dir) # Staring structure
-np.save(f'{out_dir}/dark.npy', dark_voxel)
-result2pdb.write_single_pdb(dark_voxel, out_dir, 'dark.pdb', rmax=50)
+dark_voxel = pdb2voxel.main(args.dark_model, 'dark', out_dir) # Staring structure
+#np.save(f'{out_dir}/dark.npy', dark_voxel)
+#result2pdb.write_single_pdb(dark_voxel, out_dir, 'dark.pdb', rmax=50)
 # ─────────────────── run GA, save best shape ─────────────────────
-ga = Evolution(target_path, dark_voxel, mode, args.rmax_start, args.rmax_end+1, max_iter=args.max_iter)
+ga = Evolution(target_path, dark_voxel, mode, args.rmax_start, args.rmax_end+1, max_iter=args.max_iter, rcenter=args.rmax)
 best_lat = ga.iterate()
-best_voxel = ga._decode_batch(best_lat[:Z_DIM][None,:])[0] # Result from genetic algorithm
-# ─────────────────── save best diff map ─────────────────────
+latent_vector = best_lat[:Z_DIM]   # the latent variables
+best_rmax = best_lat[-1]
+best_voxel = ga._decode_batch(best_lat[:Z_DIM][None,:]) # Result from genetic algorithm
+best_voxel,n_regions = ga._region_process(best_voxel)
+
+
+# ─────────────────── save best structure ─────────────────────
+best_voxel = result2pdb.write_bead(best_voxel)
 np.save(f'{out_dir}/best_voxel.npy', best_voxel)
-result2pdb.write_single_pdb(best_voxel, out_dir, 'diff.pdb',rmax=50)
-# ─────────────────── save extrapolated light ───────────────
-best_light, diff_mask = add_propagated_difference(dark_voxel,best_voxel) # Add starting and best voxel to produce light structure
-np.save(f'{out_dir}/best_light.npy', best_light) #
-result2pdb.write_single_pdb(best_light, out_dir, 'light.pdb',rmax=50)
-result2pdb.write_single_pdb(diff_mask, out_dir, 'diff_mask.pdb',rmax=50)
+
+if mode == "withoutrmax":
+    result2pdb.write_single_pdb(best_voxel, out_dir, 'diff.pdb',rmax=best_rmax)
+else:
+    result2pdb.write_single_pdb(best_voxel, out_dir, 'diff.pdb', rmax=args.rmax)
 print("GA finished.")
+""""
 # Save final SAXS curve and a plot showing comparison   
 
 # Load experimental SAXS data (already processed)
@@ -308,3 +398,4 @@ plot_path = out_dir / "final_saxs_comparison.png"
 plt.savefig(plot_path)
 plt.close()
 print(f"Final SAXS comparison plot saved to {plot_path}")
+"""

@@ -41,7 +41,7 @@ def build_autoencoder():
     x = _conv_block(x, 128)
 
     x = tf.keras.layers.Flatten()(x)
-    z = tf.keras.layers.Dense(Z_DIM, activation="tanh",
+    z = tf.keras.layers.Dense(Z_DIM, activation="relu",
                               kernel_initializer=K_INIT,
                               name="latent")(x)
 
@@ -66,10 +66,10 @@ def build_autoencoder():
     d = tf.keras.layers.Conv3D(1, 3, padding="same",
                                kernel_initializer=K_INIT,
                                name="conv3d_final")(d)
-    out = tf.keras.layers.Activation("tanh", name="tanh")(d)
+    out = tf.keras.layers.Activation("sigmoid", name="sigmoid")(d)
 
     auto = tf.keras.Model(inp, out, name="voxel_autoencoder")
-    auto.compile(optimizer=tf.keras.optimizers.Adam(5e-4), loss="mse")
+    auto.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.0005), loss="binary_crossentropy")
 
     encoder = tf.keras.Model(inp, z, name="encoder")
 
@@ -83,19 +83,50 @@ def build_autoencoder():
     x = auto.get_layer("batch_norm_1")(x)
     x = auto.get_layer("relu_1")(x)
     x = auto.get_layer("conv3d_final")(x)
-    out_dec = auto.get_layer("tanh")(x)
+    out_dec = auto.get_layer("sigmoid")(x)
     decoder = tf.keras.Model(latent_in, out_dec, name="decoder")
 
     return auto, encoder, decoder
 
 # ─────────────────────── loading utilities ───────────────────────
 def _load_weights(model, weights_path: Path | str):
+    """
+    Load weights into the model from a .keras or .h5 file.
+    If `weights_path` is a directory or base name, automatically searches for one.
+    """
     weights_path = Path(weights_path)
+
+    # If given path is a directory, search for matching file
+    if weights_path.is_dir():
+        keras_files = list(weights_path.glob("*.keras"))
+        h5_files = list(weights_path.glob("*.h5"))
+        if keras_files:
+            weights_path = keras_files[0]
+        elif h5_files:
+            weights_path = h5_files[0]
+        else:
+            raise FileNotFoundError(f"No .keras or .h5 file found in {weights_path}")
+
+    # If given path has no suffix, try adding one
+    elif weights_path.suffix == "":
+        keras_candidate = weights_path.with_suffix(".keras")
+        h5_candidate = weights_path.with_suffix(".h5")
+        if keras_candidate.exists():
+            weights_path = keras_candidate
+        elif h5_candidate.exists():
+            weights_path = h5_candidate
+        else:
+            raise FileNotFoundError(f"No .keras or .h5 file found for base {weights_path}")
+
+    # Now load depending on extension
     if weights_path.suffix == ".keras":
         loaded = tf.keras.models.load_model(weights_path, compile=False)
         model.set_weights(loaded.get_weights())
+    elif weights_path.suffix == ".h5":
+        model.load_weights(str(weights_path))
     else:
-        model.load_weights(weights_path)
+        raise ValueError(f"Unsupported weights file format: {weights_path.suffix}")
+
 
 # ───────────────────────── API functions ─────────────────────────
 def decode_latent(z_vectors: np.ndarray,

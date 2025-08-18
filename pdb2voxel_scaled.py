@@ -1,9 +1,3 @@
-# -*- coding: utf-8 -*-
-"""
-pdb2voxel.py
-------------------------------------------------------------------
-Converts PDB files to 3D voxel object
-"""
 import sys
 import numpy as np
 from Bio.PDB import PDBParser
@@ -22,14 +16,20 @@ def parse_pdb_atoms(pdbfile):
                         atoms.append(atom.coord)
     return np.array(atoms)
 
-def center_coords(coords):
-    centroid = coords.mean(axis=0)
-    return coords - centroid  # center without scaling
+def center_and_scale_coords(coords, target_box_size):
+    coords_centered = coords - coords.mean(axis=0)
+    min_coords = coords_centered.min(axis=0)
+    max_coords = coords_centered.max(axis=0)
+    max_extent = np.max(max_coords - min_coords)
+    scale_factor = (target_box_size * 0.95) / max_extent  # leave small margin
+    coords_scaled = coords_centered * scale_factor
+    return coords_scaled, scale_factor
 
-def voxelize_atoms_fixed_box(coords, grid_size=31, box_size=100.0, sigma=0.7):
+
+def voxelize_atoms(coords, grid_size=31, box_size=100.0, sigma=0.7, scale_factor=1.0):
     """
-    Converts centered coordinates into voxel grid without per-structure scaling.
-    Assumes box_size is the total spatial span (in Å), e.g., 100 Å = ±50 Å radius.
+    Converts centered & scaled coordinates into voxel grid.
+    sigma is adjusted so that the atom's effective radius in Å remains constant.
     """
     voxel_grid = np.zeros((grid_size, grid_size, grid_size), dtype=float)
     scale = (grid_size - 1) / box_size  # Å to voxel index
@@ -38,9 +38,11 @@ def voxelize_atoms_fixed_box(coords, grid_size=31, box_size=100.0, sigma=0.7):
     indices = np.clip(indices, 0, grid_size - 1)
     np.add.at(voxel_grid, tuple(indices.T), 1.0)
 
-    voxel_grid = gaussian_filter(voxel_grid, sigma=sigma)
-    #voxel_grid /= voxel_grid.max()
+    # Adjust sigma to maintain constant real-space smoothing
+    sigma_scaled = sigma / scale_factor
+    voxel_grid = gaussian_filter(voxel_grid, sigma=sigma_scaled)
     return voxel_grid
+
 
 def write_bead(voxel_grid, threshold=0.5):
     labeled = np.zeros(voxel_grid.shape, dtype=int)
@@ -53,14 +55,16 @@ def main(pdbfile, save_basename, outpath, grid_size=31, box_size=100.0, threshol
     if coords.size == 0:
         print("No atoms found in PDB.")
         return
-    #centered_coords = center_coords(coords)  # center only, no scaling
-    voxel_grid = voxelize_atoms_fixed_box(coords, grid_size=grid_size, box_size=box_size)
 
+    scaled_coords, scale_factor = center_and_scale_coords(coords, box_size)
+    voxel_grid = voxelize_atoms(scaled_coords, grid_size=grid_size, box_size=box_size,
+                                sigma=0.7, scale_factor=scale_factor)
     labeled_cube = write_bead(voxel_grid, threshold=threshold)
 
-    # Save the labeled voxel grid
-    np.save(f'{outpath}/{save_basename}.npy', labeled_cube)
-    np.save(f'{outpath}/{save_basename}_continous_cube.npy', voxel_grid)
+    np.save(f'{outpath}/{save_basename}_scaled.npy', labeled_cube)
+    np.save(f'{outpath}/{save_basename}_continuous_cube.npy', voxel_grid)
+    # save the scale for later
+    np.save(f'{outpath}/{save_basename}_scale_factor.npy', np.array([scale_factor], dtype=float))
     return labeled_cube
 
 
@@ -71,8 +75,5 @@ if __name__ == "__main__":
 
     pdb_file = sys.argv[1]
     out_path = sys.argv[2]
-
-    # Dynamically extract the basename (without extension)
     save_name = os.path.splitext(os.path.basename(pdb_file))[0]
-
     main(pdb_file, save_name, out_path)

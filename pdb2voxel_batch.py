@@ -9,7 +9,7 @@ import os
 import glob
 import sys
 from multiprocessing import Pool
-from pdb2_voxel_no_tbx import *
+from pdb2voxel_scaled import *
 from tqdm import tqdm
 
 
@@ -17,8 +17,8 @@ def process_file(args):
     pdbfile, outdir = args
     basename = os.path.splitext(os.path.basename(pdbfile))[0]
 
-    labeled_path = os.path.join(outdir, f"{basename}_labeled_cube.npy") # Grid with Gaussian applied
-    continuous_path = os.path.join(outdir, f"{basename}_continous_cube.npy") # No Gaussian applied
+    labeled_path = os.path.join(outdir, f"{basename}.npy") # Grid with Gaussian applied
+    continuous_path = os.path.join(outdir, f"{basename}_.npy") # No Gaussian applied
 
     if os.path.exists(labeled_path) and os.path.exists(continuous_path):
         return f"Skipped {basename} (already exists)"
