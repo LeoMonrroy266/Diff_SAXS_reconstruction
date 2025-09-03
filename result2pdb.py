@@ -29,6 +29,7 @@ def voxel_to_pdb(vox: np.ndarray,
                  atom_name_pos: str = "C",   # atom name for positive voxels
                  atom_name_neg: str = "O",   # atom name for negative voxels
                  residue: str = "ALA",
+                 scale_factor: float = 1.0,
                  ccp4_file: str | Path | None = None,
                  pdb_reference_file: str | Path | None = None) -> None:
     # grid_size = vox.shape[0]
@@ -45,7 +46,8 @@ def voxel_to_pdb(vox: np.ndarray,
 
     box_size = 2 * rmax
     voxel_size = box_size / (grid_size - 1)
-    coords = idx * voxel_size - rmax  # Convert voxel indices to Å coordinates centered at 0
+    coords = idx * voxel_size - rmax
+    coords = coords /scale_factor# Convert voxel indices to Å coordinates centered at 0
     # Build structure
     model = Model(0)
     chain = Chain("A")
@@ -152,7 +154,8 @@ def write_single_pdb(voxel: np.ndarray,
                      name: str,
                      target_pdb: str | Path | None = None,
                      rmax_ref_pdb: str | Path | None = None,
-                     rmax: float | None = None):
+                     rmax: float | None = None,
+                     scale_factor: float = 1.0,):
 
 
     out_dir = Path(output_folder)
@@ -163,7 +166,7 @@ def write_single_pdb(voxel: np.ndarray,
             raise ValueError("Either rmax or rmax_ref_pdb must be provided")
         rmax = estimate_rmax_bounding_box(rmax_ref_pdb)
     voxel = write_bead(voxel)
-    voxel_to_pdb(voxel, rmax, out_dir/name, ccp4_file=f'{out_dir}/{name}.ccp4')
+    voxel_to_pdb(voxel, rmax, out_dir/name, ccp4_file=f'{out_dir}/{name}.ccp4', scale_factor=scale_factor)
 
     if target_pdb:
         # Determine which output file exists: PDB or CIF

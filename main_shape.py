@@ -1,7 +1,7 @@
 # coding:utf-8
 import numpy as np
 import map2iq_shape as map2iq
-import auto_encoder_t_py3  # uses tf.keras under TF2
+import auto_encoder_t_py3
 import time
 import multiprocessing
 import threading
@@ -15,7 +15,7 @@ import tensorflow as tf
 import os
 import logging
 import absl.logging
-
+import align2PDB as align2pdb
 # Silence prints in terminal to see program output when running/debugging
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'   # 0 = all logs, 1 = filter INFO, 2 = filter WARNING, 3 = filter ERROR
 tf.get_logger().setLevel(logging.ERROR)
@@ -204,78 +204,11 @@ class Evolution:
             group_rmax = np.copy(group[:, -1]).reshape(-1, 1)
 
         t1 = time.time()
-        region_inf = np.empty(shape=(num,), dtype=bool)
-        #pool = multiprocessing.Pool(processes=20)
-        #result = pool.map(region_process, real_data_group)
+
         result = np.array([region_search.find_largest_connected_region(x) for x in real_data_group])
 
 
-        #pool.close()
-        #pool.join()
-        """
-        for ii in range(num):
-            if result[ii][1] > 1:
-                region_inf[ii] = True
-                real_data_group[ii] = result[ii][0]
-            else:
-                region_inf[ii] = False
 
-        process_gene_num = len([i for i in region_inf if i is True])
-        logfile.write('reprocess gene number: %d\n' % process_gene_num)
-
-        data_to_process = real_data_group[region_inf]
-        data_to_process_z = group[region_inf]
-
-        if self.mode == 'withoutrmax':
-            data_to_process_rmax = data_to_process_z[:, -1].reshape(-1, 1)
-
-        data_unchanged = real_data_group[(~region_inf)]
-        z_unchanged = group[(~region_inf)]
-
-        if data_to_process.shape[0] == 0:
-            real_data_group = data_unchanged
-            self.group = z_unchanged
-        else:
-            threads = []
-            sub_group_num = data_to_process.shape[0] // max(GPU_NUM, 1)
-            addone_num = data_to_process.shape[0] % max(GPU_NUM, 1)
-            data_processed = []
-            z_processed = []
-
-            # Uses threads to keep structure (similar to old version)
-            for ii in range(addone_num):
-                t = MyThread(self.region_process,
-                             args=(data_to_process[(ii * (sub_group_num + 1)):((ii + 1) * (sub_group_num + 1))], ii))
-                threads.append(t)
-                t.start()
-
-            end_position = addone_num * (sub_group_num + 1)
-            if sub_group_num != 0:
-                for jj in range(max(GPU_NUM, 1) - addone_num):
-                    start = (end_position + jj * sub_group_num)
-                    stop = (end_position + (jj + 1) * sub_group_num)
-                    t = MyThread(self.region_process, args=(data_to_process[start:stop], addone_num + jj))
-                    threads.append(t)
-                    t.start()
-
-            for t in threads:
-                t.join()
-            for t in threads:
-                result_t = t.get_result()
-                data_processed.append(result_t[1])
-                z_processed.append(result_t[0])
-
-            data_processed = np.concatenate(data_processed, axis=0)
-            z_processed = np.concatenate(z_processed, axis=0)
-
-            if self.mode == 'withoutrmax':
-                z_processed = np.concatenate([z_processed, data_to_process_rmax], axis=1)
-
-            real_data_group = np.concatenate([data_unchanged, data_processed], axis=0)
-            self.group = np.concatenate([z_unchanged, z_processed], axis=0)
-        
-        
-        """
         real_data_group = result
         result = np.array([np.pad(r, pad_width=((0, 1), (0, 1), (0, 1)), mode='constant') for r in result])
 
@@ -483,6 +416,7 @@ if __name__ == '__main__':
     process_result = ps.process(iq_path)
     if len(process_result) == 2:
         estimate_rmax = process_result[1]
+        estimate_rmax = None
     saxs_data = process_result[0]
     processed_saxs_path = os.path.join(output_folder, 'processed_saxs.iq')
     np.savetxt(processed_saxs_path, saxs_data, fmt='%.3f')
@@ -517,12 +451,22 @@ if __name__ == '__main__':
         t2 = time.time()
 
     if target_pdb == 'None':
-        result2pdb.write_single_pdb(result_sample[0], output_folder, 'result.pdb', rmax=rmax)
+        for n, result in enumerate(result_sample[:5]):
+            result2pdb.write_single_pdb(result, output_folder, f'result_{n}.pdb', rmax=rmax)
         t3 = time.time()
     else:
-        result2pdb.write_single_pdb(result_sample[0], output_folder, 'result.pdb', rmax=rmax, target_pdb=target_pdb)
+        for n, result in enumerate(result_sample[:5]):
+            result2pdb.write_single_pdb(result, output_folder, f'result_{n}.pdb', rmax=rmax)
+            file = os.path.join(output_folder, f'result_{n}.pdb')
+            save_file = os.path.join(output_folder, f'result_{n}_aligned.pdb')
+            cc_global, cc_masked_hard, cc_masked_soft, cc_rscc, phi = align2pdb.main(file, target_pdb, save_file)
+            #logfile.write(f"Overall PCC for model_{n} against ref: {cc_global} \n")
+            #logfile.write(f"Masked_hard PCC for model_{n} against ref: {cc_masked_hard} \n")
+            #logfile.write(f"Masked_soft PCC for model_{n} against ref: {cc_masked_soft} \n")
+            logfile.write(f"Real space CC for model_{n} against ref: {cc_rscc} \n")
+            logfile.write(f"Phi_max for model_{n} against ref: {phi} \n")
         t3 = time.time()
-        result2pdb.cal_cc(voxel_group, rmax, output_folder, target_pdb)
+
 
     t4 = time.time()
     print('total_time:', (t4 - t1))

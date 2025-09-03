@@ -78,6 +78,7 @@ def read_standardiq_dat(file_name):
 def read_standardiq_out(file_name):
     try:
         file = open(file_name, 'r')
+
     except Exception:
         return 1, 1, 1
     q = []
@@ -157,18 +158,57 @@ def average_filter(data, step, derivation=False):
 
 
 def process(file_path):
-    if file_path.endswith('.out'):
+    Rmax = ''
+    result = []
+
+    if file_path.split('.')[-1] == 'out':
         stat, iq_curve, Rmax = read_standardiq_out(file_path)
         if stat != 0:
             return False
     else:
+        # iq_curve = read_iq(file_path)
         stat, iq_curve = read_standardiq_dat(file_path)
         if stat != 0:
             return False
-        Rmax = None
+    fixiq = average_filter(iq_curve, 1).reshape((-1, 2))
 
-    # Return raw (or trimmed) data
-    return [iq_curve] if Rmax is None else [iq_curve, Rmax]
+    fitx = np.copy(fixiq[:, 0]).reshape(-1)
+    fity = np.copy(fixiq[:, 1]).reshape(-1)
+
+    if iq_curve[0, 0] // 0.005 == 0:
+        xstart = 0.005
+    elif iq_curve[0, 0] % 0.005 == 0:
+        xstart = (iq_curve[0, 0] // 0.005) * 0.005
+    else:
+        xstart = (iq_curve[0, 0] // 0.005 + 1) * 0.005
+
+    xend = 0.201 if 0.201 < iq_curve[-1, 0] else iq_curve[-1, 0]
+    x_scale = np.arange(xstart, xend, 0.005, dtype=float)
+    fitlen = len(x_scale)
+    y_value = np.zeros(shape=(fitlen), dtype=float)
+    position = 0
+
+    for ii in range(len(fitx)):
+        if fitx[ii] >= x_scale[position]:
+            if ii - 2 < 0:
+                y_fit = np.polyfit(fitx[:ii + 3], fity[:ii + 3], 1)
+                a, b = y_fit.tolist()
+                y_value[position] = a * x_scale[position] + b
+                continue
+            elif ii + 2 > len(fitx):
+                y_fit = np.polyfit(fitx[ii - 3:], fity[ii - 3:], 2)
+            else:
+                y_fit = np.polyfit(fitx[ii - 2:ii + 2], fity[ii - 2:ii + 2], 2)
+            a, b, c = y_fit.tolist()
+            y_value[position] = a * x_scale[position] ** 2 + b * x_scale[position] + c
+            position += 1
+            if position == fitlen:
+                break
+    preprocessediq = np.concatenate((x_scale.reshape(-1, 1), y_value.reshape(-1, 1)), axis=1)
+    result.append(preprocessediq)
+    if file_path.split('.')[-1] == 'out':
+        result.append(Rmax)
+    return result
 
 
 
