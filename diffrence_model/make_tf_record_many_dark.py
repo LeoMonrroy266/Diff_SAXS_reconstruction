@@ -48,23 +48,22 @@ def create_tfrecords_from_npy(directory, reference, output_dir,  num_threads=8):
     arrays = [pad_to_32(np.load(f)).astype(np.float32) for f in tqdm(npy_files, desc="Padding arrays")]
     ref = pad_to_32(np.load(reference))
     arrays.append(ref)
-    print("Processing arrays to binary beads...")
-    beads = [write_bead(arr) for arr in tqdm(arrays, desc="Creating binary beads")]
 
     print(f"Calculating differences...")
-    ref = np.array([beads[-1] * len(beads[:-1])])
-    arrays = np.array(beads[:-1])
-    differences = beads - ref
-    differences = np.array([diff for diff in tqdm(differences, desc="Calculating differences") if diff.sum() != 0 ])
+    ref = np.array([arrays[-1] * len(arrays[:-1])])
+    arrays = np.array(arrays[:-1])
+    differences = arrays - ref
+    differences = [diff for diff in tqdm(differences, desc="Calculating differences") if diff.sum() != 0 ]
+    print("Processing arrays to binary beads...")
+    beads = [write_bead(arr) for arr in tqdm(differences, desc="Creating binary beads")]
 
-
-    print(f"Total number of samples: {len(beads)}")
+    print(f"Total number of samples: {len(differences)}")
 
     examples_train = []
     examples_test = []
 
     def process_sample(idx):
-        flat = differences[idx].flatten().astype(np.int64)
+        flat = beads[idx].flatten().astype(np.int64)
         return (idx, serialize_example(flat, idx))
 
     print("Serializing examples using multithreading...")
@@ -90,6 +89,6 @@ if __name__ == "__main__":
         directory=sys.argv[1],
         reference=sys.argv[2],
         output_dir=sys.argv[3],
-        num_threads=14
+        num_threads=8
     )
 

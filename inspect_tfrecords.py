@@ -72,8 +72,8 @@ def convert_random_samples_to_pdbs(tfrecord_path, output_dir, num_samples=100, s
 # ─── Run ─────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     convert_random_samples_to_pdbs(
-        tfrecord_path="/home/leonardo/SAXS_reconstruction/changed_network/train_net/dataset/LOV2/train.tfrecords",
-        output_dir="/home/leonardo/SAXS_reconstruction/changed_network/train_net/dataset/LOV2/inspected_diffs",
+        tfrecord_path="/home/leonardo/testing_saxs/training_data_LOV2/train.tfrecords",
+        output_dir="/home/leonardo/testing_saxs/training_data_LOV2/inspected_diffs",
         num_samples=100,
         seed=42
     )
